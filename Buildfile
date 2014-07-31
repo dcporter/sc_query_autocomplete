@@ -1,0 +1,1 @@
+config :all, :required=> [:'sproutcore/desktop', :'sproutcore/datastore']
