@@ -22,8 +22,10 @@ QueryAutocomplete.QueryFieldView = SC.View.extend({
   currentTextBinding: '*_controller.currentText',
   tokenStack: null,
   tokenStackBinding: SC.Binding.oneWay('*_controller.tokenStack'),
-  guessList: null,
-  guessListBinding: SC.Binding.oneWay('*_controller.guessList'),
+
+  // Not yet in.
+  guesses: null,
+  guessesBinding: SC.Binding.oneWay('*_controller.guesses'),
 
   // The view is made up of a series of token pills, and a final editable section.
   childViewLayout: SC.View.HORIZONTAL_STACK,
@@ -31,7 +33,8 @@ QueryAutocomplete.QueryFieldView = SC.View.extend({
   childViews: ['inputView'],
 
   inputView: SC.TextFieldView.extend(SC.AutoResize, {
-    layout: { width: 10 },
+    layout: { height: 24, width: 10 },
+    classNames: ['query-autocomplete-input'],
     valueBinding: '.parentView.currentText',
     deleteBackward: function(evt) {
       var value = this.get('value') || '';
@@ -50,11 +53,23 @@ QueryAutocomplete.QueryFieldView = SC.View.extend({
   }),
 
   tokenExampleView: SC.LabelView.extend(SC.AutoResize, {
-    layout: { width: 10 },
-    classNames: ['query-token-view'],
+    layout: { height: 24, width: 10 },
+    classNames: ['query-autocomplete-token'],
+    classNameBindings: ['tokenTypeClass'],
     displayProperties: ['value'],
     token: null,
-    value: null
+    value: function() {
+      return this.getPath('token.tokenValue');
+    }.property('token').cacheable(),
+    tokenType: function() {
+      return this.getPath('token.tokenType');
+    }.property('token').cacheable(),
+    // tokenTypeClass: function() {
+    //   var tokenType = this.get('tokenType');
+    //   if (!tokenType) return '';
+    //   else if (tokenType === '=') return 'query-autocomplete-token-operator';
+    //   else return 'query-autocomplete-token-%@'.fmt(tokenType.toLowerCase());
+    // }.property('tokenType').cacheable()
   }),
 
   // Our job here is to reliably turn a list of tokens into a list of token pill views.
@@ -74,14 +89,12 @@ QueryAutocomplete.QueryFieldView = SC.View.extend({
       // Update...
       if (view) {
         view.setIfChanged('token', token);
-        view.setIfChanged('value', token.tokenValue);
         view.setIfChanged('isVisible', YES);
       }
       // ...or create.
       else {
         view = this.tokenExampleView.create({
           token: token,
-          value: token.tokenValue
         });
         this.insertBefore(view, inputView);
       }
