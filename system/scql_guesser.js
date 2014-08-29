@@ -1,4 +1,13 @@
 
+
+QAC.QUERY_POSITION = {
+  BEGINNING: 'beginning',
+  MIDDLE: 'middle',
+  END: 'end',
+  AFTER: 'after',
+  UNKNOWN: 'unknown'
+};
+
 /** @class
   This class verifies and tokenizes input SCQL query text, and offers a context-aware list of suggested
   autocompletions. Text goes in, a stack of query tokens and a list of next-up guesses comes out.
@@ -7,11 +16,13 @@
   `tokenStack`, which contains an array of strings extracted from currentText as you go, and `guesses`,
   which exposes an array of autocomplete strings.
 
-  You can also observe `isValidQuery` for whether the current stack of tokens is a valid, complete query.
+  When you need to snag the query's full text out, get the `fullText` property.
+
+  You can observe `isValidQuery` for whether the current stack of tokens is a valid, complete query.
 
   @author Dave Porter dcporter@gmail.com
 */
-QueryAutocomplete.ScqlGuesser = SC.Object.extend({
+QAC.ScqlGuesser = SC.Object.extend({
 
   /**
     The current input text. Bind this (two-way) to your text input source.
@@ -28,6 +39,29 @@ QueryAutocomplete.ScqlGuesser = SC.Object.extend({
   tokenStack: [],
 
   /**
+    The full text of the query as entered. Includes auto-closed parentheses.
+  
+    @property
+    @readonly
+    @type {String}
+  */
+  fullText: function() {
+    var tokenStack = this.get('tokenStack'),
+      currentText = this.get('currentText'),
+      parenCount = this.get('closingParenthesisCount'),
+      i, token,
+      ret = '';
+    for (i = 0; i < tokenStack.length; i++) {
+      token = tokenStack[i];
+      if (token.tokenType === 'STRING') ret += ' "%@"'.fmt(token.tokenValue);
+      else ret += " " + token.tokenValue;
+    }
+    if (currentText) ret += " " + currentText;
+    for (i = 0; i < parenCount; i++) { ret += ' )'; }
+    return ret;
+  }.property('tokenStack', 'currentText').cacheable(),
+
+  /**
     Whether the current token stack represents a valid, complete query.
 
     @type {Boolean}
@@ -37,8 +71,79 @@ QueryAutocomplete.ScqlGuesser = SC.Object.extend({
   }.property('tokenStack').cacheable(),
 
   // -------------------------
-  // Guesses
+  // Guessing
   //
+
+  /**
+    The query position of the currently-editing token (currentText). Can be:
+
+    - QAC.QUERY_POSITION.BEGINNING: The first token in an expression should be a property, or certain types of
+      operators (e.g. NOT).
+    - QAC.QUERY_POSITION.MIDDLE: After a property comes an operator to operate on it.
+    - QAC.QUERY_POSITION.END: After most operators comes a primitive value.
+    - QAC.QUERY_POSITION.AFTER: After a complete expression, you can close any parentheses or add an expression-
+      level operator (e.g. AND).
+    - QAC.QUERY_POSITION.UNKNOWN
+
+    @type {QAC.QUERY_POSITION}
+  */
+  currentQueryPosition: function() {
+    var tokenStack = this.get('tokenStack'),
+        grammar = this._q.queryLanguage,
+        position = QAC.QUERY_POSITION.UNKNOWN;
+
+    // Get the last token if available.
+    var priorTokenMarker = tokenStack ? tokenStack[tokenStack.length - 1] : null,
+        priorTokenType = priorTokenMarker ? priorTokenMarker.tokenType : null,
+        priorToken = priorTokenType ? grammar[priorTokenType] : null;
+
+    // Special case: UNKNOWN.
+    if (priorTokenType === 'UNKNOWN') return position;
+
+    // We're at the beginning if...
+    // we're actually at the beginning.
+    if (!priorToken) position = QAC.QUERY_POSITION.BEGINNING;
+    // ...we're following an OPEN_PAREN.
+    else if (priorTokenType === 'OPEN_PAREN') position = QAC.QUERY_POSITION.BEGINNING;
+    // ...we're following an expression-level boolean like AND, OR, NOT, et cetera.
+    else if (priorToken.evalType === 'BOOLEAN' && priorToken.rightType === 'BOOLEAN') position = QAC.QUERY_POSITION.BEGINNING;
+
+    // We're in the middle if we're following a PROPERTY.
+    else if (priorTokenType === 'PROPERTY') position = QAC.QUERY_POSITION.MIDDLE;
+
+    // We're at the end if we're following...
+    // an operator (evalType of BOOLEAN) with a PRIMITIVE rightType.
+    else if (priorToken.evalType === 'BOOLEAN' && priorToken.rightType === 'PRIMITIVE') position = QAC.QUERY_POSITION.END;
+
+    // We're after a full expression if...
+    // ...we're after a non-PROPERTY primitive (including a full EXPRESSION; see above).
+    else if (priorToken.evalType === 'PRIMITIVE' && priorTokenType !== 'PROPERTY') position = QAC.QUERY_POSITION.AFTER;
+    // ...we're after an operator (evalType of BOOLEAN) with no rightType.
+    else if (priorToken.evalType === 'BOOLEAN' && !priorToken.rightType) position = QAC.QUERY_POSITION.AFTER;
+    // ... we're after a CLOSE_PAREN.
+    else if (priorTokenType === 'CLOSE_PAREN') position = QAC.QUERY_POSITION.AFTER;
+
+    return position;
+  }.property('tokenStack').cacheable(),
+
+  /**
+    The number of closing parentheses currently needed. For example, "((()" needs two, while "(()()" needs one.
+
+    @property
+    @readonly
+    @type {Number}
+  */
+  closingParenthesisCount: function() {
+    var tokenStack = this.get('tokenStack'),
+      parenCount = 0,
+      i, tokenMarker, includeCloseParen;
+    for (i = 0; i < tokenStack.length; i++) {
+      tokenMarker = tokenStack[i];
+      if (tokenMarker.tokenType === 'OPEN_PAREN') parenCount += 1;
+      if (tokenMarker.tokenType === 'CLOSE_PAREN') parenCount -= 1;
+    }
+    return parenCount;
+  }.property('tokenStack').cacheable(),
 
   /**
     The root record type of any property (attribute) guesses you wish to enable. Fed to the
@@ -52,13 +157,15 @@ QueryAutocomplete.ScqlGuesser = SC.Object.extend({
     The attribute guesser class used to provide autocomplete guesses for the PROPERTY token
     type. You must also provide a recordType.
 
-    @type {QueryAutocomplete.AttributeGuesser}
+    @type {QAC.AttributeGuesser|String}
   */
-  attributeGuesser: 'QueryAutocomplete.AttributeGuesser',
+  attributeGuesser: 'QAC.AttributeGuesser',
 
   /**
     The array of suggested autocompletions for the current text.
 
+    @property
+    @readonly
     @type {Array}
   */
   guesses: function() {
@@ -75,7 +182,8 @@ QueryAutocomplete.ScqlGuesser = SC.Object.extend({
     else {
       return [];
     }
-  }.property('_nextTokenTypePredictions', 'currentText').cacheable(),
+  }.property('_nextTokenTypePredictions', 'currentText', 'recordType').cacheable(),
+
 
   // -------------------------
   // Methods
@@ -211,64 +319,14 @@ QueryAutocomplete.ScqlGuesser = SC.Object.extend({
 
   /* @private Offers a list of next token types. */
   _nextTokenTypePredictions: function() {
-    var tokenList = this.get('tokenStack'),
-        grammar = this._q.queryLanguage,
-        ret = [],
-        token;
-
-    // Special case: no grammar.
-    if (!grammar) return ret;
-
-    // Get the last token if available.
-    var priorTokenMarker = tokenList ? tokenList[tokenList.length - 1] : null,
-        priorTokenType = priorTokenMarker ? priorTokenMarker.tokenType : null,
-        priorToken = priorTokenType ? grammar[priorTokenType] : null;
-
-    // Special case: UNKNOWN.
-    if (priorTokenType === 'UNKNOWN') return ret;
-
-    // We could be in one of four places: the beginning, middle, end, or after.
-    // For example:
-    // property1    =    4   AND  property2    =   17
-    // BEGINNING MIDDLE END AFTER BEGINNING MIDDLE END
-    var BEGINNING = 0,
-        MIDDLE = 1,
-        END = 2,
-        AFTER = 3,
-        position, key;
-
-
-    // First, figure out which position we're being asked to predict.
-
-    // We're at the beginning if...
-    // we're actually at the beginning.
-    if (!priorToken) position = BEGINNING;
-    // ...we're following an OPEN_PAREN.
-    else if (priorTokenType === 'OPEN_PAREN') position = BEGINNING;
-    // ...we're following an expression-level boolean like AND, OR, NOT, et cetera.
-    else if (priorToken.evalType === 'BOOLEAN' && priorToken.rightType === 'BOOLEAN') position = BEGINNING;
-
-    // We're in the middle if we're following a PROPERTY.
-    else if (priorTokenType === 'PROPERTY') position = MIDDLE;
-
-    // We're at the end if we're following...
-    // an operator (evalType of BOOLEAN) with a PRIMITIVE rightType.
-    else if (priorToken.evalType === 'BOOLEAN' && priorToken.rightType === 'PRIMITIVE') position = END;
-
-    // We're after a full expression if...
-    // ...we're after a non-PROPERTY primitive (including a full EXPRESSION; see above).
-    else if (priorToken.evalType === 'PRIMITIVE' && priorTokenType !== 'PROPERTY') position = AFTER;
-    // ...we're after an operator (evalType of BOOLEAN) with no rightType.
-    else if (priorToken.evalType === 'BOOLEAN' && !priorToken.rightType) position = AFTER;
-    // ... we're after a CLOSE_PAREN.
-    else if (priorTokenType === 'CLOSE_PAREN') position = AFTER;
-    // TODO: Should we just return the empty array?
-    else throw new Error("QueryAutocomplete.ScqlGuesser#_predictNextToken ran into a situation that it didn't expect with token %@, and is unable to determine about which query position it is being asked.".fmt(priorTokenType));
-
+    var position = this.get('currentQueryPosition'),
+      grammar = this._q.queryLanguage,
+      ret = [],
+      key, token;
 
     // With the position in hand, let's figure out what's acceptable there.
 
-    if (position === BEGINNING) {
+    if (position === QAC.QUERY_POSITION.BEGINNING) {
       // The first token can be an expression can be OPEN_PAREN, PROPERTY, or anything
       // with an evalType of BOOLEAN and no leftType (e.g. "NOT").
       ret.push('OPEN_PAREN');
@@ -278,7 +336,7 @@ QueryAutocomplete.ScqlGuesser = SC.Object.extend({
         if (token.evalType === 'BOOLEAN' && !token.leftType) ret.push(key);
       }
     }
-    else if (position === MIDDLE) {
+    else if (position === QAC.QUERY_POSITION.MIDDLE) {
       // In the middle we expect an operator looking to operate on the left-side PRIMITIVE
       // which precedes it.
       for (key in grammar) {
@@ -286,34 +344,17 @@ QueryAutocomplete.ScqlGuesser = SC.Object.extend({
         if (token.evalType === 'BOOLEAN' && token.leftType === 'PRIMITIVE') ret.push(key);
       }
     }
-    else if (position === END) {
+    else if (position === QAC.QUERY_POSITION.END) {
       // At the end, we want a primitive OTHER than a PROPERTY.
       for (key in grammar) {
         token = grammar[key];
         if (key !== 'PROPERTY' && token.evalType === 'PRIMITIVE') ret.push(key);
       }
     }
-    else if (position === AFTER) {
-      // In the AFTER position, we want an operator that expects a BOOLEAN on the left. Or a
-      // CLOSE_PAREN, if appropriate.
-      var parenCount = 0,
-          i, tokenMarker, includeCloseParen;
-      // Working backwards: Openers increment parenCount, closers decrement it. If parenCount ever goes over
-      // zero, we've got an unclosed paren and should include CLOSE_PAREN.
-      // For example, working backwards in "(( Hello )", parenCount goes to -1 before rising to 1, indicating
-      // a needed close. Working backwards through "((()())" will result in a parenCount of -1, -2, -1, -2, -1,
-      // 0, 1, indicating a needed close.
-      // This won't currently handle syntactically invalid statements like ")()(".
-      for (i = tokenList.length - 1; i >= 0; i--) {
-        tokenMarker = tokenList[i];
-        if (tokenMarker.tokenType === 'OPEN_PAREN') parenCount += 1;
-        if (tokenMarker.tokenType === 'CLOSE_PAREN') parenCount -= 1;
-        if (parenCount > 0) {
-          includeCloseParen = true;
-          break;
-        }
-      }
-      if (includeCloseParen) ret.push('CLOSE_PAREN');
+    else if (position === QAC.QUERY_POSITION.AFTER) {
+    // In the AFTER position, we want an operator that expects a BOOLEAN on the left. Or a
+    // CLOSE_PAREN, if appropriate.
+      if (this.get('closingParenthesisCount')) ret.push('CLOSE_PAREN');
       for (key in grammar) {
         token = grammar[key];
         if (token.evalType === 'BOOLEAN' && token.leftType === 'BOOLEAN') ret.push(key);
@@ -321,7 +362,7 @@ QueryAutocomplete.ScqlGuesser = SC.Object.extend({
     }
 
     return ret;
-  }.property('tokenStack').cacheable(),
+  }.property('currentQueryPosition').cacheable(),
 
   // -------------------------
   // Attribute guesses.
@@ -329,9 +370,10 @@ QueryAutocomplete.ScqlGuesser = SC.Object.extend({
 
   _attributeGuesser: function() {
     var attributeGuesser = this.get('attributeGuesser');
-    if (!attributeGuesser) return null;
     if (SC.typeOf(attributeGuesser) === SC.T_STRING) attributeGuesser = SC.objectForPropertyPath(attributeGuesser);
-    if (attributeGuesser.isClass) attributeGuesser = attributeGuesser.create();
+    // FAST PATH: Nothin.
+    if (!attributeGuesser) return null;
+    if (attributeGuesser.isClass) attributeGuesser = attributeGuesser.create({ recordType: this.get('recordType') });
     attributeGuesser.bind('recordType', this, 'recordType');
     return attributeGuesser;
   }.property('attributeGuesser').cacheable(),

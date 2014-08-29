@@ -1,5 +1,5 @@
 
-QueryAutocomplete = SC.Object.create({
+QueryAutocomplete = QAC = SC.Object.create({
   NAMESPACE: 'QueryAutocomplete',
-  VERSION: '0.0.1'
+  VERSION: '0.1.0'
 });

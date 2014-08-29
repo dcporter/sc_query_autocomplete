@@ -27,7 +27,7 @@
 
   @author Dave Porter dcporter@gmail.com
 */
-QueryAutocomplete.AttributeGuesser = SC.Object.extend({
+QAC.AttributeGuesser = SC.Object.extend({
   /**
     The root record type. You may specify a class, an instance, or a string.
 
@@ -111,15 +111,13 @@ QueryAutocomplete.AttributeGuesser = SC.Object.extend({
       ret.push(nextType);
     }
     return ret;
-  }.property('_attributeStack').cacheable(),
+  }.property('_attributeStack', '_recordType').cacheable(),
 
   /** @private The recordType property, converted from a string if needed. */
   _recordType: function() {
-    // FAST PATH: No record type.
     var recordType = this.get('recordType');
-    if (!recordType) return null;
-
     if (SC.typeOf(recordType) === SC.T_STRING) recordType = SC.objectForPropertyPath(recordType);
+    if (!recordType) return null;
     if (!recordType.isClass) recordType = recordType.constructor;
     return recordType;
   }.property('recordType').cacheable()

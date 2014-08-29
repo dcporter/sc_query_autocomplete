@@ -2,7 +2,7 @@
 // A view which allows users to intuitively edit a string of space-delimited tokens.
 // Bind currentText and tokenStack to a SC.ScqlGuesser instance.
 
-QueryAutocomplete.QueryFieldView = SC.View.extend({
+QAC.QueryFieldView = SC.View.extend({
 
   // Eventually, this should be a special class which handles tokenizing, attribute-guessing and query suggesting.
   controller: null,
@@ -17,25 +17,24 @@ QueryAutocomplete.QueryFieldView = SC.View.extend({
 
   // We need three things from the controller: the list of tokens, the current text, and the list
   // of guesses.
-
   currentText: null,
   currentTextBinding: '*_controller.currentText',
   tokenStack: null,
   tokenStackBinding: SC.Binding.oneWay('*_controller.tokenStack'),
-
-  // Not yet in.
   guesses: null,
   guessesBinding: SC.Binding.oneWay('*_controller.guesses'),
 
   // The view is made up of a series of token pills, and a final editable section.
   childViewLayout: SC.View.HORIZONTAL_STACK,
 
-  childViews: ['inputView'],
+  childViews: ['inputView', 'parenthesesView'],
+  _qfmp_staticChildViewCount: 2,
 
   inputView: SC.TextFieldView.extend(SC.AutoResize, {
     layout: { height: 24, width: 10 },
     classNames: ['query-autocomplete-input'],
     valueBinding: '.parentView.currentText',
+    spellCheckEnabled: NO,
     deleteBackward: function(evt) {
       var value = this.get('value') || '';
       if (value.length !== 0) return NO;
@@ -49,13 +48,33 @@ QueryAutocomplete.QueryFieldView = SC.View.extend({
     insertTab: function(evt) {
       this.parentView.get('_controller').doShiftToken();
       return NO;
+    },
+    didBecomeFirstResponder: function() {
+      this.parentView._scqfv_guessesDidChange();
+    },
+    willLoseFirstResponder: function() {
+      this.parentView.get('_menuPane').remove();
     }
+  }),
+
+  parenthesesView: SC.LabelView.extend(SC.AutoResize, {
+    layout: { height: 24, width: 10 },
+    classNames: ['query-autocomplete-closing-parentheses'],
+    count: 0,
+    countBinding: SC.Binding.oneWay('.parentView*_controller.closingParenthesisCount'),
+    marginBefore: 10, // see SC.View.HORIZONTAL_STACK
+    value: function() {
+      var count = this.get('count'),
+        ret = '',
+        i;
+      for (i = 0; i < count; i++) { ret += ' )'; }
+      return ret;
+    }.property('count').cacheable()
   }),
 
   tokenExampleView: SC.LabelView.extend(SC.AutoResize, {
     layout: { height: 24, width: 10 },
     classNames: ['query-autocomplete-token'],
-    classNameBindings: ['tokenTypeClass'],
     displayProperties: ['value'],
     token: null,
     value: function() {
@@ -64,6 +83,7 @@ QueryAutocomplete.QueryFieldView = SC.View.extend({
     tokenType: function() {
       return this.getPath('token.tokenType');
     }.property('token').cacheable(),
+    // classNameBindings: ['tokenTypeClass'],
     // tokenTypeClass: function() {
     //   var tokenType = this.get('tokenType');
     //   if (!tokenType) return '';
@@ -72,13 +92,39 @@ QueryAutocomplete.QueryFieldView = SC.View.extend({
     // }.property('tokenType').cacheable()
   }),
 
+  menuPane: SC.MenuPane.extend({
+    acceptsMenuPane: NO,
+    isModal: NO,
+    layout: { width: 200 },
+    _qfmp_menuItemsDidChange: function() {
+      this.invokeLast(this._qfmp_updateHeight);
+    }.observes('items'),
+    _qfmp_updateHeight: function() {
+      this.adjust('height', this.get('menuHeight'));
+    }
+  }),
+
+  _menuPane: function() {
+    var menuPane = this.get('menuPane');
+    if (!menuPane) return null;
+    if (SC.typeOf(menuPane) === SC.T_STRING) menuPane = SC.objectForPropertyPath(menuPane);
+    if (menuPane.isClass) menuPane = menuPane.create();
+    menuPane.bind('items', this, 'guesses');
+    return menuPane;
+  }.property('menuPane').cacheable(),
+
+  init: function() {
+    sc_super();
+    this._scqfv_guessesDidChange();
+  },
+
   // Our job here is to reliably turn a list of tokens into a list of token pill views.
   _scqfv_tokenStackDidChange: function() {
     // Get the token stack, and all of the token views currently present.
     var tokenStack = this.get('tokenStack') || [],
         childViews = this.get('childViews') || [],
-        inputView = childViews.get('lastObject'),
-        tokenViews = childViews.slice(0, -1), // All but the last view, which is our input view.
+        inputView = this.inputView,
+        tokenViews = childViews.slice(0, -this._qfmp_staticChildViewCount), // Slice off the non-static views.
         tokenCount = tokenStack.length,
         viewCount = tokenViews.length,
         i, token, view;
@@ -104,6 +150,18 @@ QueryAutocomplete.QueryFieldView = SC.View.extend({
       view = tokenViews[i];
       if (view) view.set('isVisible', NO);
     }
-  }.observes('*tokenStack.[]')
+  }.observes('*tokenStack.[]'),
+
+  _scqfv_guessesDidChange: function() {
+    var menuPane = this.get('_menuPane'),
+      isAttached = menuPane.get('isAttached'),
+      guesses = this.get('guesses'),
+      guessCount = guesses ? guesses.get('length') : 0;
+    if (guessCount && !isAttached && this.get('hasFirstResponder')) {
+      menuPane.popup(this);
+    } else if (!guessCount && isAttached) {
+      menuPane.remove();
+    }
+  }.observes('*guesses.[]')
 
 });
