@@ -62,12 +62,19 @@ QAC.ScqlGuesser = SC.Object.extend({
   }.property('tokenStack', 'currentText').cacheable(),
 
   /**
+    The query language. Defaults to SC.Query's queryLanguage property.
+  */
+  queryLanguage: function() {
+    return SC.clone(this._q.queryLanguage);
+  }.property().cacheable(),
+
+  /**
     Whether the current token stack represents a valid, complete query.
 
     @type {Boolean}
   */
   isValidQuery: function() {
-    return !this._q.buildTokenTree(this.get('tokenStack'), this._q.queryLanguage).isError;
+    return !this._q.buildTokenTree(this.get('tokenStack'), this.get('queryLanguage')).isError;
   }.property('tokenStack').cacheable(),
 
   // -------------------------
@@ -89,7 +96,7 @@ QAC.ScqlGuesser = SC.Object.extend({
   */
   currentQueryPosition: function() {
     var tokenStack = this.get('tokenStack'),
-        grammar = this._q.queryLanguage,
+        grammar = this.get('queryLanguage'),
         position = QAC.QUERY_POSITION.UNKNOWN;
 
     // Get the last token if available.
@@ -164,25 +171,64 @@ QAC.ScqlGuesser = SC.Object.extend({
   /**
     The array of suggested autocompletions for the current text.
 
+    To modify this list in your own subclass, override this calculated property and manipulate
+    the results of `sc_super()`.
+
     @property
     @readonly
     @type {Array}
   */
   guesses: function() {
     var types = this.get('_nextTokenTypePredictions'),
-      currentText = this.get('currentText'),
-      guesser;
+      excluded = this.get('excluded') || SC.EMPTY_ARRAY,
+      queryLanguage = this.get('queryLanguage'),
+      currentText = this.get('currentText') || '',
+      ret = [],
+      len = types.get('length'),
+      i, type, token, guesser;
 
-    // For now we're just gonna do PROPERTY (attribute) guesses.
-    if (types.contains('PROPERTY')) {
-      guesser = this.get('_attributeGuesser');
-      guesser.set('currentText', currentText);
-      return guesser.get('guesses');
+    currentText = currentText.toLowerCase();
+
+    // Loop through the suggestion types, building the guesses list depending on what's in it.
+    // NOTE: There's a disappointing amount of special-case handling here. A few extensions to
+    // the SCQL token API may be able to reduce this without being too fiddly or special-case.
+    for (i = 0; i < len; i++) {
+      type = types[i];
+      token = queryLanguage[type];
+      // For PROPERTY, we turn it over to the attributeGuesser.
+      if (type === 'PROPERTY') {
+        guesser = this.get('_attributeGuesser');
+        guesser.set('currentText', currentText);
+        ret = ret.concat(guesser.get('guesses'));
+      }
+      // If the token is a "reservedWord" (i.e. its type is its value text, e.g. "="), it goes right in.
+      else if (
+        token.reservedWord &&
+        currentText === type.substr(0, currentText.length).toLowerCase() &&
+        !excluded.contains(type)
+      ) {
+        ret.push(type);
+      }
+      // Add open and close parentheses, if appropriate.
+      else if (type === 'OPEN_PAREN') {
+        if (currentText === '' || currentText === '(') ret.push('(');
+      }
+      else if (type === 'CLOSE_PAREN') {
+        if (currentText === '' || currentText === ')') ret.push(')');
+      }
     }
-    else {
-      return [];
-    }
+
+    return ret;
   }.property('_nextTokenTypePredictions', 'currentText', 'recordType').cacheable(),
+
+  /**
+    The list of tokens that will not show up as suggestions. Note that this property is not concatenated with
+    subclass values, allowing you to include the default-excluded terms; however, this means that if you
+    override it you must include them yourself if you wish to do so.
+
+    @type {Array}
+  */
+  excluded: ['%@', 'YES', 'NO'],
 
 
   // -------------------------
@@ -245,7 +291,7 @@ QAC.ScqlGuesser = SC.Object.extend({
     this.beginPropertyChanges();
 
     var currentText = this.get('currentText'),
-        queryLanguage = this._q.queryLanguage,
+        queryLanguage = this.get('queryLanguage'),
         currentTokens = this._q.tokenizeString(currentText, queryLanguage);
 
     // If our text tokenizes to more than one token, move the leading ones onto the stack.
@@ -320,7 +366,7 @@ QAC.ScqlGuesser = SC.Object.extend({
   /* @private Offers a list of next token types. */
   _nextTokenTypePredictions: function() {
     var position = this.get('currentQueryPosition'),
-      grammar = this._q.queryLanguage,
+      grammar = this.get('queryLanguage'),
       ret = [],
       key, token;
 

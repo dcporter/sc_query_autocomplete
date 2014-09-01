@@ -35,6 +35,10 @@ QAC.QueryFieldView = SC.View.extend({
     classNames: ['query-autocomplete-input'],
     valueBinding: '.parentView.currentText',
     spellCheckEnabled: NO,
+
+    currentMenuItem: null,
+    currentMenuItemBinding: SC.Binding.oneWay('.parentView._menuPane*currentMenuItem.value'),
+
     deleteBackward: function(evt) {
       var value = this.get('value') || '';
       if (value.length !== 0) return NO;
@@ -42,18 +46,34 @@ QAC.QueryFieldView = SC.View.extend({
       return YES;
     },
     insertNewline: function(evt) {
+      var currentMenuItem = this.get('currentMenuItem');
+      if (currentMenuItem) {
+        this.setPath('parentView._controller.currentText', currentMenuItem);
+      }
       this.parentView.get('_controller').doShiftToken();
-      return NO;
+      return YES;
     },
     insertTab: function(evt) {
-      this.parentView.get('_controller').doShiftToken();
-      return NO;
+      var currentMenuItem = this.get('currentMenuItem');
+      if (currentMenuItem) {
+        this.set('value', currentMenuItem);
+      }
+      return YES;
     },
+
+    // Key events proxied directly to the menu pane.
+    moveUp: function() { return this.getPath('parentView._menuPane').moveUp() },
+    moveDown: function() { return this.getPath('parentView._menuPane').moveDown() },
+    moveToBeginningOfDocument: function() { return this.getPath('parentView._menuPane').moveToBeginningOfDocument() },
+    moveToEndOfDocument: function() { return this.getPath('parentView._menuPane').moveToEndOfDocument() },
+    pageDown: function() { return this.getPath('parentView._menuPane').pageDown() },
+    pageUp: function() { return this.getPath('parentView._menuPane').pageUp() },
+
     didBecomeFirstResponder: function() {
       this.parentView._scqfv_guessesDidChange();
     },
     willLoseFirstResponder: function() {
-      this.parentView.get('_menuPane').remove();
+      // this.getPath('parentView._menuPane').remove();
     }
   }),
 
@@ -101,7 +121,21 @@ QAC.QueryFieldView = SC.View.extend({
     }.observes('items'),
     _qfmp_updateHeight: function() {
       this.adjust('height', this.get('menuHeight'));
-    }
+    },
+    modalPaneDidClick: function() {
+      this.anchor.becomeFirstResponder();
+      return YES;
+    },
+    exampleView: SC.MenuItemView.extend({
+      mouseEntered: null,
+      mouseExited: null,
+      mouseUp: function() {
+        var controller = this.getPath('parentMenu.anchor._controller');
+        controller.set('currentText', this.get('value'));
+        controller.doShiftToken();
+        return YES;
+      }
+    })
   }),
 
   _menuPane: function() {
@@ -109,6 +143,8 @@ QAC.QueryFieldView = SC.View.extend({
     if (!menuPane) return null;
     if (SC.typeOf(menuPane) === SC.T_STRING) menuPane = SC.objectForPropertyPath(menuPane);
     if (menuPane.isClass) menuPane = menuPane.create();
+    // Anchor should be set automatically, but hasn't since SC commit daa3c3cbb864c81a5c1511d4126644773cb5ecf3
+    menuPane.set('anchor', this);
     menuPane.bind('items', this, 'guesses');
     return menuPane;
   }.property('menuPane').cacheable(),
