@@ -113,22 +113,32 @@ QAC.QueryFieldView = SC.View.extend({
   }),
 
   menuPane: SC.MenuPane.extend({
+    // TODO: Port this to experimental SC.AutoResizingMenuPane or equivalent.
+    layout: { width: 200 },
+    // Prevent some default (super-transient) MenuPane behavior.
     acceptsMenuPane: NO,
     isModal: NO,
-    layout: { width: 200 },
     _qfmp_menuItemsDidChange: function() {
+      // If we don't clear the current menu item, we get some odd behavior with the arrow keys.
+      this.set('currentMenuItem', null);
+      // MenuPane doesn't expect its items to change dynamically, so we have to hook up menu height ourselves.
       this.invokeLast(this._qfmp_updateHeight);
     }.observes('items'),
     _qfmp_updateHeight: function() {
       this.adjust('height', this.get('menuHeight'));
     },
+    // Instead of dismissing the menu pane, modalPaneDidClick should focus the text field in case it's lost focus.
     modalPaneDidClick: function() {
-      this.anchor.becomeFirstResponder();
+      this.anchor.inputView.becomeFirstResponder();
       return YES;
     },
     exampleView: SC.MenuItemView.extend({
+      // Disable mouseover behavior. (Too fiddly. We want to lock the selection to the keyboard selection.) Note
+      // that the visual highlights on mouseover are mediated by the menu item view CSS's `a:hover` selector, and
+      // can be overridden in if desired.
       mouseEntered: null,
       mouseExited: null,
+      // Disable
       mouseUp: function() {
         var controller = this.getPath('parentMenu.anchor._controller');
         controller.set('currentText', this.get('value'));
@@ -194,7 +204,7 @@ QAC.QueryFieldView = SC.View.extend({
       guesses = this.get('guesses'),
       guessCount = guesses ? guesses.get('length') : 0;
     if (guessCount && !isAttached && this.get('hasFirstResponder')) {
-      menuPane.popup(this);
+      menuPane.popup(this.inputView);
     } else if (!guessCount && isAttached) {
       menuPane.remove();
     }

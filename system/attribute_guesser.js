@@ -54,26 +54,33 @@ QAC.AttributeGuesser = SC.Object.extend({
     @type {Array}
   */
   guesses: function() {
-      // We are currently matching to the last attribute in the string. For example if currentText is
-      // "bestFriend.dog.waterB" we are searching the dog's record type for attributes which begin with
-      // "waterB".
+    // We are currently matching to the last attribute in the string. For example if currentText is
+    // "bestFriend.dog.waterBo" we are searching the dog's record type for attributes which begin with
+    // "waterBo".
     var attributeStack = this.get('_attributeStack'),
         index = attributeStack.length - 1,
         currentAttribute = (attributeStack[index] || '').toLowerCase(),
         recordTypeStack = this.get('_recordTypeStack'),
         currentRecordType = recordTypeStack[index];
+    
+    // FAST PATH: No currentRecordType.
     if (!currentRecordType) return [];
 
     var recordAttributes = currentRecordType.recordAttributes(),
         len = currentAttribute.length,
         key,
         ret = [];
-    
+
+    // EXPERIMENTAL: Add the full attribute stack to each suggestion. (Not quite working yet.)
+    var fullAttributePrefix = attributeStack.length > 1 ? attributeStack.slice(0, attributeStack.length - 1).join('.') + '.' : '';
+
+    // Prioritize matches that start with the current attribute.
     for (key in recordAttributes) {
-      if (key.toLowerCase().substring(0, len) === currentAttribute) ret.push(key);
+      if (key.toLowerCase().substring(0, len) === currentAttribute) ret.push(fullAttributePrefix + key);
     }
+    // Find any others that match internally (e.g. 'log' matching 'blogged').
     for (key in recordAttributes) {
-      if (key.toLowerCase().indexOf(currentAttribute) !== -1 && ret.indexOf(key) === -1) ret.push(key);
+      if (key.toLowerCase().indexOf(currentAttribute) >= 1) ret.push(fullAttributePrefix + key);
     }
     return ret;
   }.property('_recordTypeStack').cacheable(),

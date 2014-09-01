@@ -65,7 +65,7 @@ QAC.ScqlGuesser = SC.Object.extend({
     The query language. Defaults to SC.Query's queryLanguage property.
   */
   queryLanguage: function() {
-    return SC.clone(this._q.queryLanguage);
+    return SC.clone(SC.Query.prototype.queryLanguage);
   }.property().cacheable(),
 
   /**
@@ -74,7 +74,7 @@ QAC.ScqlGuesser = SC.Object.extend({
     @type {Boolean}
   */
   isValidQuery: function() {
-    return !this._q.buildTokenTree(this.get('tokenStack'), this.get('queryLanguage')).isError;
+    return !SC.Query.prototype.buildTokenTree(this.get('tokenStack'), this.get('queryLanguage')).isError;
   }.property('tokenStack').cacheable(),
 
   // -------------------------
@@ -134,7 +134,65 @@ QAC.ScqlGuesser = SC.Object.extend({
   }.property('tokenStack').cacheable(),
 
   /**
-    The number of closing parentheses currently needed. For example, "((()" needs two, while "(()()" needs one.
+    Given the current tokenStack, this property lists the names of the tokens that are eligible for use
+    at currentText. For example, if the token stack contains a record attribute ("PROPERTY"), then the
+    currentText may be any operator that operates on a left-hand value, such as "=", "!=", or "BEGINS_WITH".
+
+    @property
+    @readonly
+    @type {Array}
+  */
+  currentTokenTypePredictions: function() {
+    var position = this.get('currentQueryPosition'),
+      grammar = this.get('queryLanguage'),
+      ret = [],
+      key, token;
+
+    // With the position in hand, let's figure out what's acceptable there.
+
+    if (position === QAC.QUERY_POSITION.BEGINNING) {
+      // The first token can be an expression can be OPEN_PAREN, PROPERTY, or anything
+      // with an evalType of BOOLEAN and no leftType (e.g. "NOT").
+      ret.push('OPEN_PAREN');
+      ret.push('PROPERTY');
+      for (key in grammar) {
+        token = grammar[key];
+        if (token.evalType === 'BOOLEAN' && !token.leftType) ret.push(key);
+      }
+    }
+    else if (position === QAC.QUERY_POSITION.MIDDLE) {
+      // In the middle we expect an operator looking to operate on the left-side PRIMITIVE
+      // which precedes it.
+      for (key in grammar) {
+        token = grammar[key];
+        if (token.evalType === 'BOOLEAN' && token.leftType === 'PRIMITIVE') ret.push(key);
+      }
+    }
+    else if (position === QAC.QUERY_POSITION.END) {
+      // At the end, we want a primitive OTHER than a PROPERTY.
+      for (key in grammar) {
+        token = grammar[key];
+        if (key !== 'PROPERTY' && token.evalType === 'PRIMITIVE') ret.push(key);
+      }
+    }
+    else if (position === QAC.QUERY_POSITION.AFTER) {
+    // In the AFTER position, we want an operator that expects a BOOLEAN on the left. Or a
+    // CLOSE_PAREN, if appropriate.
+      if (this.get('closingParenthesisCount')) ret.push('CLOSE_PAREN');
+      for (key in grammar) {
+        token = grammar[key];
+        if (token.evalType === 'BOOLEAN' && token.leftType === 'BOOLEAN') ret.push(key);
+      }
+    }
+
+    return ret;
+  }.property('currentQueryPosition').cacheable(),
+
+  /**
+    The number of closing parentheses currently needed. For example, "((()" needs two, while "(()()"
+    needs one. (Note that this does not validate parentheses' positions, so for example it will happily
+    report that ")()((" needs one closing parenthesis. For help with validating an entered query, see
+    `isValidQuery`.)
 
     @property
     @readonly
@@ -171,15 +229,16 @@ QAC.ScqlGuesser = SC.Object.extend({
   /**
     The array of suggested autocompletions for the current text.
 
-    To modify this list in your own subclass, override this calculated property and manipulate
-    the results of `sc_super()`.
+    To modify this list in your own subclass, override this calculated property and manipulate the
+    results of `sc_super()`. You can make use of the `tokenStack`, `currentTokenTypePredictions`,
+    `currentQueryPosition`, `recordType` and `queryLanguage` properties if you wish.
 
     @property
     @readonly
     @type {Array}
   */
   guesses: function() {
-    var types = this.get('_nextTokenTypePredictions'),
+    var types = this.get('currentTokenTypePredictions'),
       excluded = this.get('excluded') || SC.EMPTY_ARRAY,
       queryLanguage = this.get('queryLanguage'),
       currentText = this.get('currentText') || '',
@@ -219,7 +278,7 @@ QAC.ScqlGuesser = SC.Object.extend({
     }
 
     return ret;
-  }.property('_nextTokenTypePredictions', 'currentText', 'recordType').cacheable(),
+  }.property('currentTokenTypePredictions', 'currentText', 'recordType').cacheable(),
 
   /**
     The list of tokens that will not show up as suggestions. Note that this property is not concatenated with
@@ -274,14 +333,8 @@ QAC.ScqlGuesser = SC.Object.extend({
   //
 
   /** @private */
-  init: function() {
-    this._q = SC.Query.create();
-    return sc_super();
-  },
-  /** @private */
   destroy: function() {
-    this._q.destroy();
-    this.attributeGuesser.destroy();
+    if (this.get('attributeGuesser')) this.get('attributeGuesser').destroy();
     return sc_super();
   },
 
@@ -292,7 +345,7 @@ QAC.ScqlGuesser = SC.Object.extend({
 
     var currentText = this.get('currentText'),
         queryLanguage = this.get('queryLanguage'),
-        currentTokens = this._q.tokenizeString(currentText, queryLanguage);
+        currentTokens = SC.Query.prototype.tokenizeString(currentText, queryLanguage);
 
     // If our text tokenizes to more than one token, move the leading ones onto the stack.
     var token;
@@ -363,52 +416,6 @@ QAC.ScqlGuesser = SC.Object.extend({
     this.notifyPropertyChange('tokenStack');
   },
 
-  /* @private Offers a list of next token types. */
-  _nextTokenTypePredictions: function() {
-    var position = this.get('currentQueryPosition'),
-      grammar = this.get('queryLanguage'),
-      ret = [],
-      key, token;
-
-    // With the position in hand, let's figure out what's acceptable there.
-
-    if (position === QAC.QUERY_POSITION.BEGINNING) {
-      // The first token can be an expression can be OPEN_PAREN, PROPERTY, or anything
-      // with an evalType of BOOLEAN and no leftType (e.g. "NOT").
-      ret.push('OPEN_PAREN');
-      ret.push('PROPERTY');
-      for (key in grammar) {
-        token = grammar[key];
-        if (token.evalType === 'BOOLEAN' && !token.leftType) ret.push(key);
-      }
-    }
-    else if (position === QAC.QUERY_POSITION.MIDDLE) {
-      // In the middle we expect an operator looking to operate on the left-side PRIMITIVE
-      // which precedes it.
-      for (key in grammar) {
-        token = grammar[key];
-        if (token.evalType === 'BOOLEAN' && token.leftType === 'PRIMITIVE') ret.push(key);
-      }
-    }
-    else if (position === QAC.QUERY_POSITION.END) {
-      // At the end, we want a primitive OTHER than a PROPERTY.
-      for (key in grammar) {
-        token = grammar[key];
-        if (key !== 'PROPERTY' && token.evalType === 'PRIMITIVE') ret.push(key);
-      }
-    }
-    else if (position === QAC.QUERY_POSITION.AFTER) {
-    // In the AFTER position, we want an operator that expects a BOOLEAN on the left. Or a
-    // CLOSE_PAREN, if appropriate.
-      if (this.get('closingParenthesisCount')) ret.push('CLOSE_PAREN');
-      for (key in grammar) {
-        token = grammar[key];
-        if (token.evalType === 'BOOLEAN' && token.leftType === 'BOOLEAN') ret.push(key);
-      }
-    }
-
-    return ret;
-  }.property('currentQueryPosition').cacheable(),
 
   // -------------------------
   // Attribute guesses.
